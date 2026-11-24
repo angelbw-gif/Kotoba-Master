@@ -25,6 +25,17 @@ import type {
 } from './types/jlpt';
 import { stopJapaneseSpeech } from './utils/audio';
 import {
+  createLocalRoom,
+  joinLocalRoom,
+  leaveLocalRoom,
+  rematchLocalRoom,
+  startLocalRoomMatch,
+  submitLocalPlayerExam,
+  subscribeLocalRoom,
+  updateLocalPlayerProgress,
+  updateLocalRoomConfig,
+} from './utils/localArena';
+import {
   computeCurrentStreak,
   getCurrentEmail,
   getOrCreateClientId,
@@ -33,7 +44,7 @@ import {
   loadPreferences,
   loadProfileForEmail,
   loadTodayCompletedQuestionIds,
-  loginWithEmailApi,
+  loginWithEmailLocal,
   logoutCurrentEmail,
   mergeAnalysesIntoFlashcardsForEmail,
   recordQuizSessionForEmail,
@@ -42,7 +53,6 @@ import {
   saveFlashcardsForEmail,
   savePreferences,
   saveProfileForEmail,
-  syncProfileToServer,
   updateFlashcardMasteryForEmail,
 } from './utils/storage';
 
@@ -56,7 +66,7 @@ export default function App() {
     loadPreferences()
   );
 
-  // Email-authenticated profile & per-email flashcards
+  // Email-authenticated profile & per-email flashcards (pure localStorage)
   const [profile, setProfile] = useState<UserProfile | null>(() => {
     const email = getCurrentEmail();
     return email ? loadProfileForEmail(email) : null;
@@ -73,131 +83,80 @@ export default function App() {
     categoryFilter: 'all',
   });
 
-  // Real-time WebSocket state for Arena Pertandingan
+  // Client-side Arena Pertandingan room state (localStorage + BroadcastChannel)
   const [onlineRoom, setOnlineRoom] = useState<OnlineRoomState | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
-  const [wsConnecting, setWsConnecting] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const pendingActionRef = useRef<(() => void) | null>(null);
   const prevRoomStatusRef = useRef<string | null>(null);
 
-  // Refresh in-memory Bearer token & sync profile on mount if email already saved
+  // Refresh local profile session cleanly on mount if email is already saved
   useEffect(() => {
     const savedEmail = getCurrentEmail();
     if (!savedEmail) return;
-    void loginWithEmailApi(savedEmail)
-      .then((resp) => {
-        if (!resp.needsName && resp.profile) {
-          setProfile(resp.profile);
-          setFlashcards(loadFlashcardsForEmail(resp.profile.email));
-        }
-      })
-      .catch(() => {
-        // Offline / transient network fallback keeps local cached session usable
-      });
-  }, []);
-
-  const sendWsMessage = useCallback((payload: unknown) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(payload));
-      return true;
-    }
-    return false;
-  }, []);
-
-  const ensureSocketConnected = useCallback((onOpenAction?: () => void) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      onOpenAction?.();
-      return;
-    }
-
-    if (onOpenAction) {
-      pendingActionRef.current = onOpenAction;
-    }
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
-      return;
-    }
-
-    setWsConnecting(true);
-    setRoomError(null);
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setWsConnecting(false);
-      const queued = pendingActionRef.current;
-      pendingActionRef.current = null;
-      queued?.();
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(String(event.data)) as {
-          type: string;
-          room?: OnlineRoomState;
-          message?: string;
-        };
-
-        if (data.type === 'room:state' && data.room) {
-          const nextRoom = data.room;
-          setRoomError(null);
-          setOnlineRoom(nextRoom);
-
-          // Auto-transition both Host & Friends into Kuis when match starts
-          if (
-            nextRoom.status === 'playing' &&
-            prevRoomStatusRef.current !== 'playing'
-          ) {
-            stopJapaneseSpeech();
-            setActiveTab('quiz');
-          }
-          prevRoomStatusRef.current = nextRoom.status;
-        } else if (data.type === 'room:error' && data.message) {
-          setRoomError(data.message);
-        }
-      } catch {
-        // Ignore malformed ws message
+    try {
+      const resp = loginWithEmailLocal(savedEmail);
+      if (!resp.needsName && resp.profile) {
+        setProfile(resp.profile);
+        setFlashcards(loadFlashcardsForEmail(resp.profile.email));
       }
-    };
-
-    ws.onerror = () => {
-      setWsConnecting(false);
-      setRoomError('Gagal terhubung ke server Arena Pertandingan.');
-    };
-
-    ws.onclose = () => {
-      setWsConnecting(false);
-      wsRef.current = null;
-    };
+    } catch {
+      // Keep existing cached session if email is invalid
+    }
   }, []);
 
-  // Auto-join room from invite URL (?room=XXXXXX) once logged in
+  const applyRoomState = useCallback((nextRoom: OnlineRoomState | null) => {
+    if (!nextRoom) {
+      setOnlineRoom(null);
+      prevRoomStatusRef.current = null;
+      return;
+    }
+    setRoomError(null);
+    setOnlineRoom(nextRoom);
+    if (
+      nextRoom.status === 'playing' &&
+      prevRoomStatusRef.current !== 'playing'
+    ) {
+      stopJapaneseSpeech();
+      setActiveTab('quiz');
+    }
+    prevRoomStatusRef.current = nextRoom.status;
+  }, []);
+
+  // Subscribe to multi-tab updates for the active local Arena room
+  const activeRoomId = onlineRoom?.roomId ?? null;
+  useEffect(() => {
+    if (!activeRoomId) return;
+    return subscribeLocalRoom(activeRoomId, (updated) => {
+      if (updated) {
+        applyRoomState(updated);
+      }
+    });
+  }, [activeRoomId, applyRoomState]);
+
+  // Auto-join room from invite URL (?room=XXXXXX...) once logged in
   useEffect(() => {
     if (typeof window === 'undefined' || !profile) return;
     const params = new URLSearchParams(window.location.search);
     const inviteCode = params.get('room')?.trim().toUpperCase();
     if (inviteCode && !onlineRoom) {
-      setQuizConfig((prev) => ({ ...prev, mode: 'arena' }));
-      ensureSocketConnected(() => {
-        sendWsMessage({
-          type: 'room:join',
-          roomId: inviteCode,
-          clientId,
-          name: profile.displayName,
-        });
+      const rawQ = params.get('q');
+      const res = joinLocalRoom(inviteCode, clientId, profile.displayName, {
+        sectionFilter: params.get('sec'),
+        categoryFilter: params.get('cat'),
+        questionIds: rawQ
+          ? rawQ
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : undefined,
       });
+      if (res.room) {
+        applyRoomState(res.room);
+      } else if (res.error) {
+        setRoomError(res.error);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.email]);
-
-  useEffect(() => {
-    return () => {
-      wsRef.current?.close();
-    };
-  }, []);
 
   const flashcardsRef = useRef(flashcards);
   flashcardsRef.current = flashcards;
@@ -207,21 +166,21 @@ export default function App() {
 
   const handleLoginSuccess = (loggedProfile: UserProfile) => {
     const cards = loadFlashcardsForEmail(loggedProfile.email);
-    setProfile(loggedProfile);
+    const syncedProfile: UserProfile = {
+      ...loggedProfile,
+      flashcardCount: cards.length,
+    };
+    saveProfileForEmail(syncedProfile);
+    setProfile(syncedProfile);
     setFlashcards(cards);
     setActiveTab('lobby');
     setSoloSessionActive(false);
-    void syncProfileToServer(loggedProfile, cards.length);
   };
 
   const handleLogout = () => {
     stopJapaneseSpeech();
     if (onlineRoom) {
-      sendWsMessage({
-        type: 'room:leave',
-        roomId: onlineRoom.roomId,
-        clientId,
-      });
+      leaveLocalRoom(onlineRoom.roomId, clientId);
     }
     prevRoomStatusRef.current = null;
     setOnlineRoom(null);
@@ -249,43 +208,32 @@ export default function App() {
   const handleUpdateConfig = (next: QuizConfig) => {
     setQuizConfig(next);
     if (onlineRoom && onlineRoom.status === 'waiting') {
-      sendWsMessage({
-        type: 'room:update_config',
-        roomId: onlineRoom.roomId,
-        clientId,
-        config: {
-          sectionFilter: next.sectionFilter,
-          categoryFilter: next.categoryFilter,
-        },
+      const updated = updateLocalRoomConfig(onlineRoom.roomId, clientId, {
+        sectionFilter: next.sectionFilter,
+        categoryFilter: next.categoryFilter,
       });
+      if (updated) applyRoomState(updated);
     }
   };
 
   const handleCreateOnlineRoom = () => {
     if (!profile) return;
-    ensureSocketConnected(() => {
-      sendWsMessage({
-        type: 'room:create',
-        clientId,
-        name: profile.displayName,
-        config: {
-          sectionFilter: quizConfig.sectionFilter,
-          categoryFilter: quizConfig.categoryFilter,
-        },
-      });
+    setRoomError(null);
+    const created = createLocalRoom(clientId, profile.displayName, {
+      sectionFilter: quizConfig.sectionFilter,
+      categoryFilter: quizConfig.categoryFilter,
     });
+    applyRoomState(created);
   };
 
   const handleJoinOnlineRoom = (roomCode: string) => {
     if (!profile) return;
-    ensureSocketConnected(() => {
-      sendWsMessage({
-        type: 'room:join',
-        roomId: roomCode,
-        clientId,
-        name: profile.displayName,
-      });
-    });
+    const res = joinLocalRoom(roomCode, clientId, profile.displayName);
+    if (res.room) {
+      applyRoomState(res.room);
+    } else if (res.error) {
+      setRoomError(res.error);
+    }
   };
 
   const handleStartOnlineMatch = () => {
@@ -293,21 +241,13 @@ export default function App() {
     const excludeIds = profile
       ? loadTodayCompletedQuestionIds(profile.email)
       : [];
-    sendWsMessage({
-      type: 'room:start',
-      roomId: onlineRoom.roomId,
-      clientId,
-      excludeIds,
-    });
+    const updated = startLocalRoomMatch(onlineRoom.roomId, clientId, excludeIds);
+    if (updated) applyRoomState(updated);
   };
 
   const handleLeaveOnlineRoom = () => {
     if (onlineRoom) {
-      sendWsMessage({
-        type: 'room:leave',
-        roomId: onlineRoom.roomId,
-        clientId,
-      });
+      leaveLocalRoom(onlineRoom.roomId, clientId);
     }
     prevRoomStatusRef.current = null;
     setOnlineRoom(null);
@@ -320,14 +260,14 @@ export default function App() {
   const handleUpdateOnlineProgress = useCallback(
     (answeredCount: number) => {
       if (!onlineRoom) return;
-      sendWsMessage({
-        type: 'room:progress',
-        roomId: onlineRoom.roomId,
+      const updated = updateLocalPlayerProgress(
+        onlineRoom.roomId,
         clientId,
-        answeredCount,
-      });
+        answeredCount
+      );
+      if (updated) setOnlineRoom(updated);
     },
-    [onlineRoom, sendWsMessage, clientId]
+    [onlineRoom, clientId]
   );
 
   const handleSubmitOnlineExam = useCallback(
@@ -336,24 +276,21 @@ export default function App() {
       totalTimeSec: number;
     }) => {
       if (!onlineRoom) return;
-      sendWsMessage({
-        type: 'room:submit_exam',
-        roomId: onlineRoom.roomId,
+      const updated = submitLocalPlayerExam(
+        onlineRoom.roomId,
         clientId,
-        ...payload,
-      });
+        payload
+      );
+      if (updated) applyRoomState(updated);
     },
-    [onlineRoom, sendWsMessage, clientId]
+    [onlineRoom, clientId, applyRoomState]
   );
 
   const handleRematchOnlineRoom = useCallback(() => {
     if (!onlineRoom) return;
-    sendWsMessage({
-      type: 'room:rematch',
-      roomId: onlineRoom.roomId,
-      clientId,
-    });
-  }, [onlineRoom, sendWsMessage, clientId]);
+    const updated = rematchLocalRoom(onlineRoom.roomId, clientId);
+    if (updated) applyRoomState(updated);
+  }, [onlineRoom, clientId, applyRoomState]);
 
   const handleUpdateCardMastery = (
     cardId: string,
@@ -372,7 +309,9 @@ export default function App() {
     setFlashcards((prev) => {
       const next = prev.filter((c) => c.id !== cardId);
       saveFlashcardsForEmail(currentProf.email, next);
-      void syncProfileToServer(currentProf, next.length);
+      const nextProf = { ...currentProf, flashcardCount: next.length };
+      saveProfileForEmail(nextProf);
+      setProfile(nextProf);
       return next;
     });
   };
@@ -416,7 +355,6 @@ export default function App() {
       if (!prev) return prev;
       const next = { ...prev, displayName, dailyGoal };
       saveProfileForEmail(next);
-      void syncProfileToServer(next, flashcardsRef.current.length);
       return next;
     });
   };
@@ -458,7 +396,7 @@ export default function App() {
             onlineRoom={onlineRoom}
             clientId={clientId}
             roomError={roomError}
-            wsConnecting={wsConnecting}
+            wsConnecting={false}
             onUpdateConfig={handleUpdateConfig}
             onUpdatePreferences={handleUpdatePreferences}
             onCreateOnlineRoom={handleCreateOnlineRoom}

@@ -10,28 +10,18 @@ import type {
 } from '../types/jlpt';
 
 const CURRENT_EMAIL_KEY = 'kotoba_master_current_email_v1';
+const PROFILE_PREFIX = 'kotoba_master_profile_v3_';
 const PREFS_KEY = 'kotoba_master_prefs_v3';
 const CLIENT_ID_KEY = 'kotoba_master_client_id_v1';
 
 export const MASTER_EMAIL = 'angelsalsadilla@gmail.com';
-
-// Held strictly in JS memory (never written to localStorage/sessionStorage)
-let inMemorySessionToken: string | null = null;
-
-export function setSessionToken(token: string | null): void {
-  inMemorySessionToken = token;
-}
-
-export function getSessionToken(): string | null {
-  return inMemorySessionToken;
-}
 
 export function isMasterEmail(email: string): boolean {
   return normalizeEmail(email) === MASTER_EMAIL;
 }
 
 function profileKeyForEmail(email: string): string {
-  return `kotoba_master_profile_v3_${normalizeEmail(email)}`;
+  return `${PROFILE_PREFIX}${normalizeEmail(email)}`;
 }
 
 function flashcardsKeyForEmail(email: string): string {
@@ -84,7 +74,6 @@ export function setCurrentEmail(email: string): void {
 }
 
 export function logoutCurrentEmail(): void {
-  inMemorySessionToken = null;
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.removeItem(CURRENT_EMAIL_KEY);
@@ -227,84 +216,79 @@ export function saveProfileForEmail(profile: UserProfile): void {
   }
 }
 
-export interface LoginApiResponse {
+export interface LocalLoginResult {
   needsName: boolean;
-  token?: string;
   profile?: UserProfile;
-  error?: string;
 }
 
-export async function loginWithEmailApi(
+export function loginWithEmailLocal(
   email: string,
   displayName?: string
-): Promise<LoginApiResponse> {
+): LocalLoginResult {
   const norm = normalizeEmail(email);
-  const localCached = loadProfileForEmail(norm);
-  const res = await fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: norm,
-      displayName,
-      localProfile: localCached ?? undefined,
-    }),
-  });
-
-  const data = (await res.json()) as LoginApiResponse;
-  if (!res.ok) {
-    throw new Error(data.error || 'Gagal melakukan login.');
+  if (!isValidEmailFormat(norm)) {
+    throw new Error('Masukkan alamat email yang valid (contoh: nama@email.com).');
   }
 
-  if (!data.needsName && data.token && data.profile) {
-    inMemorySessionToken = data.token;
+  const existing = loadProfileForEmail(norm);
+  if (existing) {
+    const refreshed: UserProfile = {
+      ...existing,
+      isMaster: isMasterEmail(norm),
+      flashcardCount: loadFlashcardsForEmail(norm).length,
+      lastActiveAt: new Date().toISOString(),
+    };
+    saveProfileForEmail(refreshed);
     setCurrentEmail(norm);
-    saveProfileForEmail(data.profile);
+    return { needsName: false, profile: refreshed };
   }
-  return data;
+
+  if (isMasterEmail(norm)) {
+    const masterProfile = createStarterProfile(norm, 'Angel Salsadilla');
+    masterProfile.flashcardCount = loadFlashcardsForEmail(norm).length;
+    saveProfileForEmail(masterProfile);
+    setCurrentEmail(norm);
+    return { needsName: false, profile: masterProfile };
+  }
+
+  const cleanName = typeof displayName === 'string' ? displayName.trim() : '';
+  if (!cleanName) {
+    return { needsName: true };
+  }
+  if (cleanName.length < 2) {
+    throw new Error('Nama minimal 2 karakter agar tampil jelas di Arena Pertandingan.');
+  }
+
+  const created = createProfileForEmail(norm, cleanName.slice(0, 28));
+  created.flashcardCount = loadFlashcardsForEmail(norm).length;
+  saveProfileForEmail(created);
+  setCurrentEmail(norm);
+  return { needsName: false, profile: created };
 }
 
-export async function syncProfileToServer(
-  profile: UserProfile,
-  flashcardCount?: number
-): Promise<void> {
-  if (!inMemorySessionToken) return;
-  const payloadProfile: UserProfile = {
-    ...profile,
-    flashcardCount:
-      typeof flashcardCount === 'number'
-        ? flashcardCount
-        : profile.flashcardCount ?? loadFlashcardsForEmail(profile.email).length,
-    lastActiveAt: new Date().toISOString(),
-  };
-
+export function loadAllLocalProfiles(): UserProfile[] {
+  if (typeof window === 'undefined') return [];
+  const users: UserProfile[] = [];
   try {
-    await fetch('/api/profile/sync', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${inMemorySessionToken}`,
-      },
-      body: JSON.stringify({ profile: payloadProfile }),
-    });
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (!key || !key.startsWith(PROFILE_PREFIX)) continue;
+      const email = key.slice(PROFILE_PREFIX.length);
+      if (!isValidEmailFormat(email)) continue;
+      const loaded = loadProfileForEmail(email);
+      if (!loaded) continue;
+      users.push({
+        ...loaded,
+        flashcardCount:
+          loaded.flashcardCount ?? loadFlashcardsForEmail(loaded.email).length,
+      });
+    }
   } catch {
-    // Best-effort background sync; local cache remains preserved
+    return [];
   }
-}
-
-export async function fetchAllUsersForMaster(): Promise<UserProfile[]> {
-  if (!inMemorySessionToken) {
-    throw new Error('Sesi Master belum aktif.');
-  }
-  const res = await fetch('/api/master/users', {
-    headers: {
-      Authorization: `Bearer ${inMemorySessionToken}`,
-    },
-  });
-  const data = (await res.json()) as { users?: UserProfile[]; error?: string };
-  if (!res.ok) {
-    throw new Error(data.error || 'Gagal memuat progres semua user.');
-  }
-  return Array.isArray(data.users) ? data.users : [];
+  return users.sort((a, b) =>
+    (b.lastActiveAt || '').localeCompare(a.lastActiveAt || '')
+  );
 }
 
 export function computeCurrentStreak(profile: UserProfile): number {
@@ -386,7 +370,6 @@ export function recordWordAttempt(
   };
 
   saveProfileForEmail(updatedProfile);
-  void syncProfileToServer(updatedProfile);
   return updatedProfile;
 }
 
@@ -426,7 +409,6 @@ export function recordQuizSessionForEmail(
   };
 
   saveProfileForEmail(updatedProfile);
-  void syncProfileToServer(updatedProfile, nextFlashcardCount);
   return updatedProfile;
 }
 
@@ -628,6 +610,5 @@ export function resetAllProgressForEmail(
       // Ignore
     }
   }
-  void syncProfileToServer(freshProfile, STARTER_FLASHCARDS.length);
   return { profile: freshProfile, flashcards: STARTER_FLASHCARDS };
 }

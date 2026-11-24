@@ -29,6 +29,7 @@ import {
   getLocalDateKey,
   getSevenDayStreakWindow,
 } from '../utils/storage';
+import { buildLocalInviteUrl } from '../utils/localArena';
 import { SectionSelector } from './SectionSelector';
 
 interface BattleLobbyProps {
@@ -100,7 +101,7 @@ export const BattleLobby: React.FC<BattleLobbyProps> = ({
 
   const handleCopyInvite = async () => {
     if (!onlineRoom || typeof window === 'undefined') return;
-    const url = `${window.location.origin}${window.location.pathname}?room=${onlineRoom.roomId}`;
+    const url = buildLocalInviteUrl(onlineRoom);
     try {
       await navigator.clipboard.writeText(url);
       setCopiedNotice(true);

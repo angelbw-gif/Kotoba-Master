@@ -11,8 +11,8 @@ import { getSubCategoryMeta } from '../data/categories';
 import type { UserProfile } from '../types/jlpt';
 import {
   computeCurrentStreak,
-  fetchAllUsersForMaster,
   getSevenDayStreakWindow,
+  loadAllLocalProfiles,
 } from '../utils/storage';
 
 interface MasterDashboardProps {
@@ -46,11 +46,11 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [wordFilter, setWordFilter] = useState<WordFilter>('all');
 
-  const loadUsers = useCallback(async () => {
+  const loadUsers = useCallback(() => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const list = await fetchAllUsersForMaster();
+      const list = loadAllLocalProfiles();
       setUsers(list);
       setSelectedEmail((prev) => {
         if (prev && list.some((u) => u.email === prev)) return prev;
@@ -66,7 +66,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
   }, []);
 
   useEffect(() => {
-    void loadUsers();
+    loadUsers();
   }, [loadUsers]);
 
   const filteredUsers = useMemo(() => {
@@ -134,13 +134,13 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
             Pantau Progres Semua User
           </h1>
           <p className="text-sm text-[#475569]">
-            Lihat aktivitas belajar, akurasi sesi, streak harian, serta frekuensi benar/salah tiap kotoba dari seluruh peserta JLPT N3.
+            Lihat aktivitas belajar, akurasi sesi, streak harian, serta frekuensi benar/salah tiap kotoba dari seluruh akun yang tersimpan di browser ini.
           </p>
         </div>
 
         <button
           type="button"
-          onClick={() => void loadUsers()}
+          onClick={loadUsers}
           disabled={loading}
           className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 text-white text-xs font-semibold transition-colors whitespace-nowrap shrink-0 self-start sm:self-auto"
         >

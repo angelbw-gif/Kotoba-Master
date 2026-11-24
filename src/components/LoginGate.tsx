@@ -4,7 +4,7 @@ import type { UserProfile } from '../types/jlpt';
 import {
   isMasterEmail,
   isValidEmailFormat,
-  loginWithEmailApi,
+  loginWithEmailLocal,
   normalizeEmail,
 } from '../utils/storage';
 
@@ -19,7 +19,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleEmailSubmit = async (e: React.FormEvent) => {
+  const handleEmailSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleaned = normalizeEmail(emailInput);
     if (!isValidEmailFormat(cleaned)) {
@@ -30,7 +30,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
     setErrorMsg(null);
     setIsSubmitting(true);
     try {
-      const resp = await loginWithEmailApi(cleaned);
+      const resp = loginWithEmailLocal(cleaned);
       if (resp.needsName && !isMasterEmail(cleaned)) {
         setStep('name');
         return;
@@ -47,7 +47,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleNameSubmit = async (e: React.FormEvent) => {
+  const handleNameSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedName = nameInput.trim();
     if (trimmedName.length < 2) {
@@ -59,7 +59,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onLoginSuccess }) => {
     setIsSubmitting(true);
     try {
       const cleanedEmail = normalizeEmail(emailInput);
-      const resp = await loginWithEmailApi(cleanedEmail, trimmedName);
+      const resp = loginWithEmailLocal(cleanedEmail, trimmedName);
       if (resp.profile) {
         onLoginSuccess(resp.profile);
       }
