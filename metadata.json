@@ -1,0 +1,6 @@
+{
+  "name": "N3 Kotoba Duel",
+  "description": "Aplikasi belajar JLPT N3 interaktif Kotoba Master dengan Arena Pertandingan online, Latihan Mandiri, 3 bagian resmi JLPT N3, riwayat frekuensi kotoba, dan Flashcard Kotoba.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
