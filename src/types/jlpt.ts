@@ -1,4 +1,4 @@
-export type AppTab = 'lobby' | 'quiz' | 'flashcards' | 'master';
+export type AppTab = 'lobby' | 'learn' | 'quiz' | 'flashcards' | 'master';
 
 export type JLPTMajorSection = 'moji_goi' | 'bunpou_dokkai' | 'choukai';
 
@@ -210,3 +210,124 @@ export interface OnlineRoomState {
   players: OnlinePlayerState[];
   startedAt: number | null;
 }
+
+// ============================================================
+// Belajar: Nihongo Sou Matome N3 Bunpou
+// ============================================================
+
+export interface SouMatomeExample {
+  jp: string;
+  id: string;
+  note?: string;
+}
+
+export interface SouMatomeGrammarPoint {
+  id: string;
+  titleJp: string;
+  connectionFormula: string;
+  registerTag?: 'Lisan' | 'Formal' | 'Tulisan' | 'Negatif' | 'Perhatian';
+  shortMeaningId: string;
+  easyExplanationId: string;
+  tipOrPitfallId?: string;
+  examples: SouMatomeExample[];
+}
+
+export interface RenshuuChoiceItem {
+  id: string;
+  numberLabel: string;
+  promptBefore: string;
+  promptAfter: string;
+  /** Some book prompts have extra text or second blank; optional suffix */
+  options: { id: string; label: string }[];
+  /** Usually 1 answer; some Sou Matome items accept 2 answers (e.g. a & b) */
+  correctOptionIds: string[];
+  explanationId: string;
+}
+
+export interface RenshuuOrderItem {
+  id: string;
+  numberLabel: string;
+  prefix: string;
+  suffix: string;
+  tokens: { id: number; label: string }[]; // 1..4
+  correctOrder: number[];
+  explanationId: string;
+}
+
+export interface SouMatomeLessonDay {
+  id: string; // e.g. 'w1-d1'
+  weekNumber: number;
+  dayNumber: 1 | 2 | 3 | 4 | 5 | 6;
+  titleJp: string;
+  titleId: string;
+  grammarPoints: SouMatomeGrammarPoint[];
+  renshuuPart1: RenshuuChoiceItem[];
+  renshuuPart2: RenshuuOrderItem[];
+}
+
+export type JissenQuestionType = 'mondai1_mcq' | 'mondai2_star' | 'mondai3_cloze';
+
+export interface JissenQuestion {
+  id: string;
+  number: number; // 1..25
+  type: JissenQuestionType;
+  /** For mondai1_mcq */
+  promptJp?: string;
+  /** For mondai2_star */
+  starPrefix?: string;
+  starSuffix?: string;
+  starSlotIndex?: number; // 0..3 (which of the 4 slots has ★)
+  /** Options 1..4 for mondai1 & mondai3, or 4 fragments 1..4 for mondai2_star */
+  options: { id: string; label: string }[];
+  /** Correct option id ('1'..'4') for mondai1 & mondai3, or full order ['2','1','4','3'] for mondai2_star */
+  correctOptionId: string;
+  correctOrderIds?: string[];
+  explanationId: string;
+}
+
+export interface SouMatomeKeigoTip {
+  titleJp: string;
+  summaryId: string;
+  pairs: { plain: string; honorificOrHumble: string; meaningId: string; exampleJp: string }[];
+}
+
+export interface SouMatomeJissenDay {
+  id: string; // e.g. 'w1-d7'
+  weekNumber: number;
+  dayNumber: 7;
+  titleJp: string;
+  titleId: string;
+  timeLimitMin: number;
+  mondai3PassageTitleJp: string;
+  mondai3PassageLines: string[];
+  questions: JissenQuestion[]; // 25 questions
+  keigoTip: SouMatomeKeigoTip;
+}
+
+export interface SouMatomeWeek {
+  weekNumber: number; // 1..6
+  titleJp: string;
+  themeId: string;
+  days: SouMatomeLessonDay[]; // 6 days
+  jissen: SouMatomeJissenDay; // Day 7
+}
+
+export interface RenshuuProgressRecord {
+  score: number;
+  total: number;
+  completedAt: string;
+}
+
+export interface JissenProgressRecord {
+  score: number;
+  total: number;
+  timeSec: number;
+  completedAt: string;
+}
+
+export interface LearnProgressState {
+  studiedDayIds: string[];
+  renshuuCompleted: Record<string, RenshuuProgressRecord>;
+  jissenResults: Record<number, JissenProgressRecord>;
+}
+

@@ -2,6 +2,7 @@ import type {
   FlashcardItem,
   FlashcardMastery,
   JLPTQuestion,
+  LearnProgressState,
   QuizSessionRecord,
   UserPreferences,
   UserProfile,
@@ -30,6 +31,10 @@ function flashcardsKeyForEmail(email: string): string {
 
 function dailyQuestionsKeyForEmail(email: string): string {
   return `kotoba_master_daily_q_v1_${normalizeEmail(email)}`;
+}
+
+function learnProgressKeyForEmail(email: string): string {
+  return `kotoba_master_learn_v1_${normalizeEmail(email)}`;
 }
 
 export function normalizeEmail(email: string): string {
@@ -596,6 +601,53 @@ export function recordTodayCompletedQuestionIds(
   return merged;
 }
 
+export function getDefaultLearnProgress(): LearnProgressState {
+  return {
+    studiedDayIds: [],
+    renshuuCompleted: {},
+    jissenResults: {},
+  };
+}
+
+export function loadLearnProgressForEmail(email: string): LearnProgressState {
+  if (typeof window === 'undefined' || !email) return getDefaultLearnProgress();
+  try {
+    const raw = window.localStorage.getItem(learnProgressKeyForEmail(email));
+    if (!raw) return getDefaultLearnProgress();
+    const parsed = JSON.parse(raw) as Partial<LearnProgressState>;
+    return {
+      studiedDayIds: Array.isArray(parsed.studiedDayIds)
+        ? parsed.studiedDayIds.filter((s): s is string => typeof s === 'string')
+        : [],
+      renshuuCompleted:
+        parsed.renshuuCompleted && typeof parsed.renshuuCompleted === 'object'
+          ? parsed.renshuuCompleted
+          : {},
+      jissenResults:
+        parsed.jissenResults && typeof parsed.jissenResults === 'object'
+          ? parsed.jissenResults
+          : {},
+    };
+  } catch {
+    return getDefaultLearnProgress();
+  }
+}
+
+export function saveLearnProgressForEmail(
+  email: string,
+  progress: LearnProgressState
+): void {
+  if (typeof window === 'undefined' || !email) return;
+  try {
+    window.localStorage.setItem(
+      learnProgressKeyForEmail(email),
+      JSON.stringify(progress)
+    );
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export function resetAllProgressForEmail(
   email: string,
   currentName: string
@@ -606,6 +658,7 @@ export function resetAllProgressForEmail(
   if (typeof window !== 'undefined') {
     try {
       window.localStorage.removeItem(dailyQuestionsKeyForEmail(email));
+      window.localStorage.removeItem(learnProgressKeyForEmail(email));
     } catch {
       // Ignore
     }

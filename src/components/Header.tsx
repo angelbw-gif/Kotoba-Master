@@ -25,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const navItems: { id: AppTab; label: string }[] = [
     { id: 'lobby', label: 'Battle Lobby' },
+    { id: 'learn', label: 'Belajar' },
     { id: 'quiz', label: 'Kuis' },
     { id: 'flashcards', label: 'Flashcard Kotoba' },
     ...(isMaster ? [{ id: 'master' as AppTab, label: 'Pantau User' }] : []),

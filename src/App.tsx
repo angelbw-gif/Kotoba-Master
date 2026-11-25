@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BattleLobby } from './components/BattleLobby';
+import { BelajarBunpou } from './components/BelajarBunpou';
 import { FlashcardKotoba } from './components/FlashcardKotoba';
 import { Header } from './components/Header';
 import { LoginGate } from './components/LoginGate';
@@ -16,6 +17,7 @@ import type {
   FlashcardItem,
   FlashcardMastery,
   JLPTQuestion,
+  LearnProgressState,
   OnlineRoomState,
   QuizConfig,
   QuizSessionRecord,
@@ -38,9 +40,11 @@ import {
 import {
   computeCurrentStreak,
   getCurrentEmail,
+  getDefaultLearnProgress,
   getOrCreateClientId,
   isMasterEmail,
   loadFlashcardsForEmail,
+  loadLearnProgressForEmail,
   loadPreferences,
   loadProfileForEmail,
   loadTodayCompletedQuestionIds,
@@ -51,6 +55,7 @@ import {
   recordWordAttempt,
   resetAllProgressForEmail,
   saveFlashcardsForEmail,
+  saveLearnProgressForEmail,
   savePreferences,
   saveProfileForEmail,
   updateFlashcardMasteryForEmail,
@@ -77,6 +82,11 @@ export default function App() {
     return email ? loadFlashcardsForEmail(email) : [];
   });
 
+  const [learnProgress, setLearnProgress] = useState<LearnProgressState>(() => {
+    const email = getCurrentEmail();
+    return email ? loadLearnProgressForEmail(email) : getDefaultLearnProgress();
+  });
+
   const [quizConfig, setQuizConfig] = useState<QuizConfig>({
     mode: 'arena',
     sectionFilter: 'moji_goi',
@@ -97,6 +107,7 @@ export default function App() {
       if (!resp.needsName && resp.profile) {
         setProfile(resp.profile);
         setFlashcards(loadFlashcardsForEmail(resp.profile.email));
+        setLearnProgress(loadLearnProgressForEmail(resp.profile.email));
       }
     } catch {
       // Keep existing cached session if email is invalid
@@ -173,6 +184,7 @@ export default function App() {
     saveProfileForEmail(syncedProfile);
     setProfile(syncedProfile);
     setFlashcards(cards);
+    setLearnProgress(loadLearnProgressForEmail(loggedProfile.email));
     setActiveTab('lobby');
     setSoloSessionActive(false);
   };
@@ -188,6 +200,7 @@ export default function App() {
     logoutCurrentEmail();
     setProfile(null);
     setFlashcards([]);
+    setLearnProgress(getDefaultLearnProgress());
     setSoloSessionActive(false);
     setActiveTab('lobby');
   };
@@ -359,11 +372,19 @@ export default function App() {
     });
   };
 
+  const handleSaveLearnProgress = (next: LearnProgressState) => {
+    setLearnProgress(next);
+    if (profile) {
+      saveLearnProgressForEmail(profile.email, next);
+    }
+  };
+
   const handleResetProgress = () => {
     if (!profile) return;
     const fresh = resetAllProgressForEmail(profile.email, profile.displayName);
     setProfile(fresh.profile);
     setFlashcards(fresh.flashcards);
+    setLearnProgress(getDefaultLearnProgress());
   };
 
   if (!profile) {
@@ -404,6 +425,15 @@ export default function App() {
             onStartOnlineMatch={handleStartOnlineMatch}
             onLeaveOnlineRoom={handleLeaveOnlineRoom}
             onNavigateTab={handleSelectTab}
+          />
+        )}
+
+        {activeTab === 'learn' && (
+          <BelajarBunpou
+            preferences={preferences}
+            learnProgress={learnProgress}
+            onUpdatePreferences={handleUpdatePreferences}
+            onSaveLearnProgress={handleSaveLearnProgress}
           />
         )}
 
